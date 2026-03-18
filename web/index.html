@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Farm Growth Tracker</title>
+
+    <!-- CSS แยกไฟล์ -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- PropTypes -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+
+<body class="bg-[#020c22] text-slate-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const {
+            LineChart, Line,
+            BarChart, Bar,
+            XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+        } = window.Recharts;
+        const { useState, useEffect } = React;
+
+        // ⚠️ SECURITY: อย่า commit ไฟล์นี้ขึ้น public repository เพราะมี API Key อยู่
+        // ควรใช้ Firebase Security Rules เพื่อจำกัดสิทธิ์การเข้าถึง Firestore
+        const firebaseConfig = {
+            apiKey: "AIzaSyBMoyVn465LHPlbZaKAAAChoh2yan8yMMc",
+            authDomain: "smart-farm-project-c73c2.firebaseapp.com",
+            projectId: "smart-farm-project-c73c2",
+            storageBucket: "smart-farm-project-c73c2.firebasestorage.app",
+            messagingSenderId: "548546992209",
+            appId: "1:548546992209:web:0075fbfc2a48af50f90070"
+        };
+
+        const isFirebaseConfigured = firebaseConfig.apiKey !== "YOUR_API_KEY";
+
+        if (isFirebaseConfigured && !firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+            firebase.firestore().settings({
+                experimentalForceLongPolling: true,
+                useFetchStreams: false
+            });
+        }
+
+        const db = isFirebaseConfigured ? firebase.firestore() : null;
+        const appId = "smart-farm-v1";
+
+        function App() {
+            const [view, setView] = useState('dashboard');
+            const [logs, setLogs] = useState([]);
+            const [plants, setPlants] = useState([]);
+            const [isLoading, setIsLoading] = useState(true);
+            const [error, setError] = useState(null);
+
+            // States
+            const [showModal, setShowModal] = useState(false);
+            const [plantHeight, setPlantHeight] = useState('');
+            const [plantSize, setPlantSize] = useState('');
+            const [plantHistory, setPlantHistory] = useState([]);
+            const [chartType, setChartType] = useState('line');
+            const [envChartType, setEnvChartType] = useState('line');
+            const [selectedDate, setSelectedDate] = useState(
+                new Date().toISOString().slice(0, 10)
+            );
+
+            // Map ชื่อ view -> ภาษาไทย
+            const viewLabels = { dashboard: 'แดชบอร์ด', plants: 'ต้นไม้ของฉัน', logs: 'ประวัติข้อมูล' };
+
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+
+                let unsubscribeLogs;
+                let unsubscribePlants;
+                let unsubscribeHistory;
+
+                if (isFirebaseConfigured && db) {
+                    // Path ข้อมูลจาก Raspberry Pi 5 (limit 200 เพื่อรองรับ filter ตามวันที่)
+                    const logsRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs');
+
+                    unsubscribeLogs = logsRef.orderBy('timestamp', 'desc').limit(200).onSnapshot(snapshot => {
+                        const data = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data(),
+                            time: doc.data().timestamp?.toDate().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) || '...'
+                        }));
+                        setLogs(data.reverse());
+                        setIsLoading(false);
+                        setError(null);
+                    }, err => {
+                        console.error("Firestore Error:", err);
+                        setError(err.message);
+                        setIsLoading(false);
+                    });
+
+                    const plantsRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('plants');
+                    unsubscribePlants = plantsRef.onSnapshot(snapshot => {
+                        setPlants(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                    });
+
+                    const historyRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('plant_history');
+
+                    unsubscribeHistory = historyRef.orderBy('createdAt').onSnapshot(snapshot => {
+                        setPlantHistory(snapshot.docs.map(doc => doc.data()));
+                    });
+
+                } else {
+                    setTimeout(() => setIsLoading(false), 1500);
+                }
+
+                return () => {
+                    if (unsubscribeLogs) unsubscribeLogs();
+                    if (unsubscribePlants) unsubscribePlants();
+                    if (unsubscribeHistory) unsubscribeHistory();
+                };
+            }, []);
+
+            // รวม useEffect ที่ซ้ำซ้อนเป็นอันเดียว
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [view, logs, isLoading, plants, plantHistory]);
+
+            // ✅ เพิ่มข้อมูลต้นไม้
+            const handleAddPlantData = async () => {
+                if (!plantHeight || !plantSize) return;
+
+                const newData = {
+                    date: new Date().toLocaleDateString('th-TH'), // ✅ วันที่ล้วน
+                    height: Number(plantHeight),
+                    size: Number(plantSize),
+                    heightUnit: 'mm',
+                    sizeUnit: 'mm',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
+
+                try {
+                    // ✅ บันทึกลง Firestore
+                    if (db) {
+                        await db
+                            .collection('artifacts')
+                            .doc(appId)
+                            .collection('public')
+                            .doc('data')
+                            .collection('plant_history') // ⭐ collection ใหม่
+                            .add(newData);
+                    }
+
+                    // ✅ อัปเดตกราฟทันที (เหมือนเดิม)
+                    setPlantHeight('');
+                    setPlantSize('');
+                    setShowModal(false);
+
+                } catch (err) {
+                    console.error(err);
+                    alert("บันทึกข้อมูลไม่สำเร็จ");
+                }
+            };
+
+            // ===== filter logs ตามวันที่ =====
+            const filteredLogs = logs.filter(log => {
+                if (!log.timestamp) return false;
+
+                const d = log.timestamp.toDate().toISOString().slice(0, 10);
+                return d === selectedDate;
+            });
+
+            // ===== แยกข้อมูลกลางวัน / กลางคืน =====
+            const processDayNightData = () => {
+                const day = [];
+                const night = [];
+
+                filteredLogs.forEach(log => {
+                    if (!log.timestamp) return;
+
+                    const dateObj = log.timestamp.toDate();
+                    const hour = dateObj.getHours();
+
+                    const item = {
+                        time: dateObj.toLocaleTimeString('th-TH', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        }),
+                        temperature: log.temperature,
+                        humidity: log.humidity,
+                        light: log.light
+                    };
+
+                    if (hour >= 6 && hour < 18) {
+                        day.push(item);
+                    } else {
+                        night.push(item);
+                    }
+                });
+
+                return { day, night };
+            };
+
+            const { day, night } = processDayNightData();
+
+            if (isLoading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-[#020c22]">
+                        <div className="flex flex-col items-center gap-4">
+                            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                            <p className="text-slate-400 text-sm font-medium">กำลังโหลดข้อมูล...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen flex flex-col md:flex-row pb-20 md:pb-0">
+                    {/* PC Sidebar / Mobile Top Brand */}
+                    <nav className="bg-[#020c22] border-slate-800 border-b md:border-r w-full md:w-64 p-4 md:p-6 flex md:flex-col justify-between items-center md:items-start md:justify-start sticky top-0 z-20">
+                        <div className="flex items-center gap-2 text-emerald-600 font-bold text-xl">
+                            <i data-lucide="sprout" className="w-8 h-8"></i> <span>SmartFarm</span>
+                        </div>
+
+                        {/* PC Navigation Links (แก้ contrast สำหรับ dark sidebar) */}
+                        <div className="hidden md:flex flex-col gap-2 mt-8 w-full">
+                            <button onClick={() => setView('dashboard')} className={`flex items-center gap-3 p-3 rounded-xl w-full transition-all ${view === 'dashboard' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:bg-white/10'}`}>
+                                <i data-lucide="layout-dashboard"></i> <span className="font-medium">แดชบอร์ด</span>
+                            </button>
+                            <button onClick={() => setView('plants')} className={`flex items-center gap-3 p-3 rounded-xl w-full transition-all ${view === 'plants' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:bg-white/10'}`}>
+                                <i data-lucide="flower-2"></i> <span className="font-medium">ต้นไม้ของฉัน</span>
+                            </button>
+                            <button onClick={() => setView('logs')} className={`flex items-center gap-3 p-3 rounded-xl w-full transition-all ${view === 'logs' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:bg-white/10'}`}>
+                                <i data-lucide="history"></i> <span className="font-medium">ประวัติข้อมูล</span>
+                            </button>
+                        </div>
+
+                        {/* Status for Mobile */}
+                        <div className="md:hidden flex items-center gap-2 bg-slate-100 px-3 py-1 rounded-full text-[10px] font-bold text-slate-600">
+                            <span className={`w-1.5 h-1.5 rounded-full ${logs.length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></span>
+                            {logs.length > 0 ? 'ONLINE' : 'OFFLINE'}
+                        </div>
+                    </nav>
+
+                    {/* Main Content Area */}
+                    <main className="flex-1 p-4 md:p-8">
+                        <header className="hidden md:flex justify-between items-center mb-8">
+                            <div className="flex items-center gap-3">
+                                <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
+                                    {viewLabels[view]}
+                                </h1>
+
+                                {view === 'plants' && (
+                                    <button
+                                        onClick={() => setShowModal(true)}
+                                        className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold"
+                                    >
+                                        กดเพื่อเพิ่ม
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100">
+                                <span className={`w-2 h-2 rounded-full ${logs.length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></span>
+                                <span className="text-xs font-bold text-slate-600 tracking-wider uppercase">
+                                    {logs.length > 0 ? 'PI 5 CONNECTED' : 'WAITING FOR PI 5...'}
+                                </span>
+                            </div>
+                        </header>
+
+                        {/* View Title for Mobile */}
+                        <div className="md:hidden mb-4 flex items-center justify-between">
+                            <h2 className="text-xl font-bold text-slate-800">
+                                {viewLabels[view]}
+                            </h2>
+
+                            {view === 'plants' && (
+                                <button
+                                    onClick={() => setShowModal(true)}
+                                    className="bg-emerald-600 text-white px-3 py-1 rounded-lg text-xs font-bold"
+                                >
+                                    กดเพื่อเพิ่ม
+                                </button>
+                            )}
+                        </div>
+
+                        {error && (
+                            <div className="bg-red-50 text-red-600 p-3 rounded-xl mb-4 text-[10px] border border-red-100 italic">
+                                ⚠️ Connection Problem: {error}
+                            </div>
+                        )}
+
+                        {view === 'dashboard' && (
+                            <div className="space-y-4 md:space-y-6">
+                                {/* Dashboard Cards */}
+                                <div className="flex md:grid md:grid-cols-3 gap-4 overflow-x-auto md:overflow-x-visible pb-2 hide-scrollbar">
+                                    {[
+                                        { label: 'อุณหภูมิ', key: 'temperature', unit: '°C', color: 'blue', icon: 'thermometer' },
+                                        { label: 'ความชื้น', key: 'humidity', unit: '%', color: 'sky', icon: 'droplets' },
+                                        { label: 'แสงสว่าง', key: 'light', unit: 'lx', color: 'amber', icon: 'sun' }
+                                    ].map((card, i) => (
+                                        <div key={card.key} className={`min-w-[140px] flex-1 bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden fade-up fade-up-delay-${i}`}>
+                                            <div className={`text-${card.color}-500 bg-${card.color}-50 w-8 h-8 md:w-10 md:h-10 flex items-center justify-center rounded-xl mb-3 md:mb-4`}><i data-lucide={card.icon} className="w-5 h-5 md:w-6 md:h-6"></i></div>
+                                            <div className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider">{card.label}</div>
+                                            <div className="text-xl md:text-3xl font-bold mt-1 text-slate-700">
+                                                {logs.length > 0 ? `${logs[logs.length - 1][card.key]}${card.unit}` : '--'}
+                                            </div>
+                                            {logs.length === 0 && <div className="absolute inset-0 no-data-shimmer opacity-30"></div>}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="bg-white p-4 md:p-6 rounded-3xl border border-slate-100 min-h-[600px] fade-up fade-up-delay-2">
+
+                                    {/* header */}
+                                    <div className="graph-header">
+
+                                        {/* ซ้าย: ชื่อกราฟ */}
+                                        <div className="graph-title">
+                                            📈 กราฟแสดงผลรายวัน
+                                        </div>
+
+                                        {/* กลาง: ตัวเลือกวันที่ */}
+                                        <div className="date-center">
+                                            <label>เลือกวันที่:</label>
+                                            <input
+                                                type="date"
+                                                value={selectedDate}
+                                                onChange={e => setSelectedDate(e.target.value)}
+                                                className="border rounded-lg px-2 py-1 text-sm text-black"
+                                            />
+                                        </div>
+
+                                        {/* ขวา: ปุ่ม */}
+                                        <button
+                                            onClick={() =>
+                                                setEnvChartType(envChartType === 'line' ? 'bar' : 'line')
+                                            }
+                                            className="bg-emerald-600 text-white px-3 py-1 rounded-lg text-xs font-bold"
+                                        >
+                                            สลับเป็น {envChartType === 'line' ? 'กราฟแท่ง' : 'กราฟเส้น'}
+                                        </button>
+
+                                    </div>
+                                    {/* ===== กลางวัน ===== */}
+                                    <div>
+                                        <p className="font-bold text-slate-700 mb-2 text-sm">🌞 กลางวัน (06:00)</p>
+                                        <div className="h-64">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                {envChartType === 'line' ? (
+                                                    <LineChart data={day}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="time" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Line type="monotone" dataKey="temperature" name="Temp °C" stroke="#3b82f6" />
+                                                        <Line type="monotone" dataKey="humidity" name="Humi %" stroke="#0ea5e9" />
+                                                        <Line type="monotone" dataKey="light" name="Light lx" stroke="#f59e0b" />
+                                                    </LineChart>
+                                                ) : (
+                                                    <BarChart data={day}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="time" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Bar dataKey="temperature" name="Temp °C" fill="#3b82f6" />
+                                                        <Bar dataKey="humidity" name="Humi %" fill="#0ea5e9" />
+                                                        <Bar dataKey="light" name="Light lx" fill="#f59e0b" />
+                                                    </BarChart>
+                                                )}
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+
+                                    {/* ===== กลางคืน ===== */}
+                                    <div>
+                                        <p className="font-bold text-slate-700 mb-2 text-sm">🌙 กลางคืน (18:00)</p>
+                                        <div className="h-64">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                {envChartType === 'line' ? (
+                                                    <LineChart data={night}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="time" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Line type="monotone" dataKey="temperature" name="Temp °C" stroke="#3b82f6" />
+                                                        <Line type="monotone" dataKey="humidity" name="Humi %" stroke="#0ea5e9" />
+                                                        <Line type="monotone" dataKey="light" name="Light lx" stroke="#f59e0b" />
+                                                    </LineChart>
+                                                ) : (
+                                                    <BarChart data={night}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="time" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Bar dataKey="temperature" name="Temp °C" fill="#3b82f6" />
+                                                        <Bar dataKey="humidity" name="Humi %" fill="#0ea5e9" />
+                                                        <Bar dataKey="light" name="Light lx" fill="#f59e0b" />
+                                                    </BarChart>
+                                                )}
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        )}
+
+
+                        {/* ===== PLANTS VIEW ===== */}
+                        {view === 'plants' && (
+                            <div className="space-y-4 fade-up">
+
+                                {/* ===== PLANT CARDS (ถ้ามีใน Firestore) ===== */}
+                                {plants.length > 0 && (
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6 fade-up">
+                                        {plants.map((plant, i) => (
+                                            <div key={plant.id} className={`bg-white rounded-2xl p-4 border border-slate-100 shadow-sm fade-pop fade-up-delay-${i % 3}`}>
+
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <i data-lucide="sprout" className="w-5 h-5 text-emerald-500"></i>
+                                                    <p className="font-bold text-slate-700 text-sm">
+                                                        {plant.name || "Plant"}
+                                                    </p>
+                                                </div>
+
+                                                <div className="text-xs text-slate-500 space-y-1">
+                                                    {plant.height && <p>สูง: {plant.height} cm</p>}
+                                                    {plant.size && <p>ขนาด: {plant.size}</p>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* ===== EMPTY STATE ===== */}
+                                {plants.length === 0 && plantHistory.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-20 text-center fade-up">
+                                        <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mb-4">
+                                            <i data-lucide="sprout" className="w-8 h-8 text-emerald-400"></i>
+                                        </div>
+                                        <p className="text-slate-500 font-medium text-sm">ยังไม่มีข้อมูลต้นไม้</p>
+                                        <p className="text-slate-400 text-xs mt-1">กด "กดเพื่อเพิ่ม" ที่ด้านบนเพื่อบันทึกข้อมูลการเติบโต</p>
+                                    </div>
+                                )}
+
+                                {/* ===== LOCAL HISTORY GRAPH ===== */}
+                                {plantHistory.length > 0 && (
+                                    <div className="bg-white p-4 rounded-3xl border border-slate-100 min-h-[500px] fade-up">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <p className="font-bold text-slate-700 text-sm">
+                                                กราฟการเติบโต
+                                            </p>
+
+                                            <button
+                                                onClick={() =>
+                                                    setChartType(chartType === 'line' ? 'bar' : 'line')
+                                                }
+                                                className="bg-emerald-600 text-white px-3 py-1 rounded-lg text-xs font-bold"
+                                            >
+                                                สลับเป็น {chartType === 'line' ? 'กราฟแท่ง' : 'กราฟเส้น'}
+                                            </button>
+                                        </div>
+
+                                        <div className="h-[420px]">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                {chartType === 'line' ? (
+                                                    <LineChart data={plantHistory}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="date" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Line type="monotone" dataKey="height" name="Height (mm)" stroke="#10b981" />
+                                                        <Line type="monotone" dataKey="size" name="Size (mm)" stroke="#3b82f6" />
+                                                    </LineChart>
+                                                ) : (
+                                                    <BarChart data={plantHistory}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="date" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Bar dataKey="height" name="Height (mm)" fill="#10b981" />
+                                                        <Bar dataKey="size" name="Size (mm)" fill="#3b82f6" />
+                                                    </BarChart>
+                                                )}
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
+
+                            </div>
+                        )}
+
+
+                        {view === 'logs' && (
+                            <div className="fade-up">
+                                <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-4 fade-up">
+                                    {logs.length === 0 ? (
+                                        <div className="p-10 text-center text-slate-400 text-xs italic">-- ไม่พบข้อมูลประวัติ --</div>
+                                    ) : (
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="bg-slate-50 border-b border-slate-100">
+                                                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase">วันที่</th>
+                                                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase">เวลา</th>
+                                                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase text-center">สถานะ</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-50">
+                                                    {logs.slice().reverse().map((log, i) => (
+                                                        <tr key={log.id} className={`hover:bg-slate-50/50 fade-up fade-up-delay-${i % 3}`}>
+
+                                                            {/* ✅ วันที่ */}
+                                                            <td className="p-3 text-xs font-medium text-slate-500">
+                                                                {log.timestamp
+                                                                    ? log.timestamp.toDate().toLocaleDateString('th-TH')
+                                                                    : '-'}
+                                                            </td>
+
+                                                            {/* ✅ เวลา */}
+                                                            <td className="p-3 text-xs font-medium text-slate-500">
+                                                                {log.time}
+                                                            </td>
+
+                                                            {/* ✅ ค่าสถานะ */}
+                                                            <td className="p-3 text-[11px]">
+                                                                <div className="flex justify-center gap-2">
+                                                                    <span className="text-blue-500 font-bold">{log.temperature}°</span>
+                                                                    <span className="text-sky-500 font-bold">{log.humidity}%</span>
+                                                                    <span className="text-amber-500 font-bold">{log.light}lx</span>
+                                                                </div>
+                                                            </td>
+
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Mobile Bottom Navigation */}
+                    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-slate-100 px-6 py-3 flex justify-between items-center z-30 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] rounded-t-[2.5rem]">
+                        <button onClick={() => setView('dashboard')} className={`flex flex-col items-center gap-1 transition-all ${view === 'dashboard' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                            <i data-lucide="layout-dashboard" className="w-6 h-6"></i>
+                            <span className="text-[10px] font-bold">Dashboard</span>
+                        </button>
+                        <button onClick={() => setView('plants')} className={`flex flex-col items-center gap-1 transition-all ${view === 'plants' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                            <div className={`p-3 rounded-full -mt-8 shadow-lg transition-all ${view === 'plants' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-400 border border-slate-100'}`}>
+                                <i data-lucide="flower-2" className="w-6 h-6"></i>
+                            </div>
+                            <span className="text-[10px] font-bold mt-1">Plants</span>
+                        </button>
+                        <button onClick={() => setView('logs')} className={`flex flex-col items-center gap-1 transition-all ${view === 'logs' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                            <i data-lucide="history" className="w-6 h-6"></i>
+                            <span className="text-[10px] font-bold">Logs</span>
+                        </button>
+                    </nav>
+                    {/* ===== MODAL ADD PLANT ===== */}
+                    {showModal && (
+                        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-overlay">
+                            <div className="bg-white rounded-2xl p-6 w-[90%] max-w-sm modal-box">
+
+                                <h3 className="text-lg font-bold text-slate-700 mb-4">
+                                    เพิ่มข้อมูลต้นไม้
+                                </h3>
+
+                                <div className="space-y-3">
+                                    <input
+                                        type="number"
+                                        placeholder="ความสูงต้นไม้ (mm)"
+                                        value={plantHeight}
+                                        onChange={e => setPlantHeight(e.target.value)}
+                                        className="w-full border rounded-xl p-2 text-sm text-black"
+                                    />
+
+                                    <input
+                                        type="number"
+                                        placeholder="ขนาดต้นใบ (mm)"
+                                        value={plantSize}
+                                        onChange={e => setPlantSize(e.target.value)}
+                                        className="w-full border rounded-xl p-2 text-sm text-black"
+                                    />
+                                </div>
+
+                                <div className="flex gap-2 mt-5">
+                                    <button
+                                        onClick={() => setShowModal(false)}
+                                        className="flex-1 bg-slate-200 py-2 rounded-xl text-sm font-bold text-black"
+                                    >
+                                        ยกเลิก
+                                    </button>
+
+                                    <button
+                                        onClick={handleAddPlantData}
+                                        className="flex-1 bg-emerald-600 text-white py-2 rounded-xl text-sm font-bold"
+                                    >
+                                        OK
+                                    </button>
+                                </div>
+
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>

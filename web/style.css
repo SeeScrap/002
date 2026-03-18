@@ -1,0 +1,130 @@
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;700&display=swap');
+
+body {
+    font-family: 'Sarabun', sans-serif;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* shimmer loading */
+.no-data-shimmer {
+    background: linear-gradient(90deg, #f1f5f9 25%, #f8fafc 50%, #f1f5f9 75%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite linear;
+}
+
+@keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+}
+
+/* hide scrollbar */
+.hide-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+.hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.graph-header {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    width: 100%;
+}
+
+.graph-title {
+    justify-self: start;
+}
+
+.date-center {
+    justify-self: center;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#toggleChart {
+    justify-self: end;
+    width: auto;        /* กันยืด */
+    max-width: max-content;
+}
+
+/* ===== ตัวหนังสือให้เข้ม ===== */
+
+/* ชื่อกราฟ */
+.graph-title {
+    color: #000 !important;
+    font-weight: 600;
+}
+
+/* label เลือกวันที่ */
+.date-center label {
+    color: #000 !important;
+    font-weight: 500;
+}
+
+/* ข้อความช่วงเวลา (เช่น กลางวัน) */
+.time-range,
+.time-label {
+    color: #000 !important;
+}
+
+/* ===== smooth slide animation ===== */
+
+.fade-up {
+    opacity: 0;
+    transform: translateY(30px);
+    animation: fadeUp 0.6s ease forwards;
+}
+
+.fade-up-delay-1 { animation-delay: 0.15s; }
+.fade-up-delay-2 { animation-delay: 0.3s; }
+.fade-up-delay-3 { animation-delay: 0.45s; }
+
+@keyframes fadeUp {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* สำหรับการ์ดที่อยากให้เด้งนิดๆ */
+.fade-pop {
+    opacity: 0;
+    transform: translateY(30px) scale(0.96);
+    animation: fadePop 0.6s ease forwards;
+}
+
+@keyframes fadePop {
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* ===== MODAL ANIMATION ===== */
+
+.modal-overlay {
+    animation: fadeOverlay 0.25s ease forwards;
+}
+
+@keyframes fadeOverlay {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.modal-box {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+    animation: modalPop 0.35s ease forwards;
+}
+
+@keyframes modalPop {
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
